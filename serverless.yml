@@ -1,0 +1,41 @@
+service: unity-on-demand-api
+
+frameworkVersion: '3'
+
+configValidationMode: error
+
+package:
+  individually: true
+
+provider:
+  name: aws
+  runtime: python3.9
+  deploymentMethod: direct
+  httpApi:
+    cors: true
+  region: ${opt:region, "us-west-2"}
+  deploymentBucket:
+    skipPolicySetup: true
+  stage: ${opt:stage, "dev"}
+  iam:
+    role:
+      permissionsBoundary: arn:aws:iam::${aws:accountId}:policy/${param:permissionsBoundaryPolicyName}
+
+functions:
+  app:
+    package:
+      patterns:
+        - "!run_local.sh"
+        - "!deploy.sh"
+        - "!.virtualenv/**"
+        - "!env/**"
+        - "!__pycache__/**"
+    handler: app.main.handler
+    environment:
+      STAGE: ${self:provider.stage}
+    events:
+      - http: ANY /
+      - http: 'ANY /{proxy+}'
+
+plugins:
+  - serverless-python-requirements
