@@ -1,4 +1,4 @@
-service: unity-on-demand-api
+service: unity-sps-api
 
 frameworkVersion: '3'
 
