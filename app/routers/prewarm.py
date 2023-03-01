@@ -2,8 +2,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 router = APIRouter(
-    prefix="/od",
-    tags=["on-demand"],
+    prefix="/sps",
+    tags=["sps"],
     responses={
         200: {"description": "Success"},
         400: {"description": "Invalid parameters"},
@@ -21,11 +21,11 @@ class PrewarmResponse(BaseModel):
 
 @router.post("/prewarm")
 async def create_prewarm_request(
-    gpu_needed: bool = False, disk_space_in_gb: int = 20, mem_size_in_gb: int = 4
+    num_nodes: int =10
 ) -> PrewarmResponse:
     return {
         "success": True,
-        "message": f"Got gpu_needed:{gpu_needed}, disk_space_in_gb: {disk_space_in_gb}, mem_size_in_gb: {mem_size_in_gb}",
+        "message": "",
         "request_id": "some-request-id",
     }
 

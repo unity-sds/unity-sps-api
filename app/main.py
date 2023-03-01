@@ -4,13 +4,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from mangum import Mangum
 
-from .routers import test, od
+from routers import test, prewarm
 
 
 app = FastAPI(
-        title="Unity On-Demand REST API",
+        title="Unity SPS REST API",
         version="0.0.1",
-        description="Unity On-Demand Operations",
+        description="Unity SPS Operations",
         root_path=f"/{os.environ.get('STAGE')}/" if "STAGE" in os.environ else None
 )
 
@@ -21,13 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.get("/")
-async def root():
-    return {"message": "Hello from the On-Demand REST API!"}
-
-
-app.include_router(od.router)
+app.include_router(prewarm.router)
 app.include_router(test.router)
 
 handler = Mangum(app)
