@@ -28,7 +28,7 @@ async def create_prewarm_request(
     return {
         "success": True,
         "message": "Prewarm is not implemented, this request has no effect.",
-        "num_nodes": f"{req.num_nodes}"
+        "request_id": f"{req.num_nodes}"
     }
 
 
