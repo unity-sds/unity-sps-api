@@ -12,6 +12,8 @@ router = APIRouter(
     },
 )
 
+class PrewarmRequest(BaseModel):
+    num_nodes: int
 
 class PrewarmResponse(BaseModel):
     success: bool
@@ -21,12 +23,12 @@ class PrewarmResponse(BaseModel):
 
 @router.post("/prewarm")
 async def create_prewarm_request(
-    num_nodes: int =10
+    req: PrewarmRequest
 ) -> PrewarmResponse:
     return {
         "success": True,
         "message": "Prewarm is not implemented, this request has no effect.",
-        "request_id": "some-request-id",
+        "num_nodes": f"{req.num_nodes}",
     }
 
 

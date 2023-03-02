@@ -12,6 +12,8 @@ router = APIRouter(
     },
 )
 
+class EchoRequest(BaseModel):
+    echo_str: str
 
 class EchoResponse(BaseModel):
     success: bool
@@ -19,5 +21,5 @@ class EchoResponse(BaseModel):
 
 
 @router.get("/echo")
-async def echo(echo_str: str) -> EchoResponse:
-    return {"success": True, "message": f"{echo_str}"}
+async def echo(req: EchoRequest) -> EchoResponse:
+    return {"success": True, "message": f"{req.echo_str}"}
