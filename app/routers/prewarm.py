@@ -28,7 +28,7 @@ async def create_prewarm_request(
     return {
         "success": True,
         "message": "Prewarm is not implemented, this request has no effect.",
-        "num_nodes": f"{req.num_nodes}",
+        "num_nodes": f"{req.num_nodes}"
     }
 
 
@@ -37,7 +37,7 @@ async def get_prewarm_request(request_id: str) -> PrewarmResponse:
     return {
         "success": True,
         "message": f"Status for prewarm request ID {request_id}.",
-        "request_id": request_id,
+        "request_id": request_id
     }
 
 @router.delete("/prewarm/{request_id}")
@@ -45,5 +45,5 @@ async def delete_prewarm_request(request_id: str) -> PrewarmResponse:
     return {
         "success": True,
         "message": f"Prewarm request ID {request_id} deleted.",
-        "request_id": request_id,
+        "request_id": request_id
     }
