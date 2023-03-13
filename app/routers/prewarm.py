@@ -20,6 +20,9 @@ class PrewarmResponse(BaseModel):
     message: str
     request_id: str
 
+class HealthCheckResponse(BaseModel):
+    message: str
+
 
 @router.post("/prewarm")
 async def create_prewarm_request(
@@ -47,3 +50,7 @@ async def delete_prewarm_request(request_id: str) -> PrewarmResponse:
         "message": f"Prewarm request ID {request_id} deleted.",
         "request_id": request_id
     }
+
+@router.get("/health-check")
+async def health_check() -> HealthCheckResponse:
+    return {"message": "The U-SPS On-Demand API is running and accessible"}

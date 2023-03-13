@@ -22,6 +22,5 @@ app.add_middleware(
 )
 
 app.include_router(prewarm.router)
-app.include_router(test.router)
 
 handler = Mangum(app)
