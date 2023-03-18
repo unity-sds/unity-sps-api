@@ -13,12 +13,6 @@ router = APIRouter(
     },
 )
 
-# Assuming this code is running inside a Kubernetes pod
-config.load_incluster_config()
-
-# Initialize the Kubernetes API client
-v1 = client.AppsV1Api()
-
 
 class PrewarmRequest(BaseModel):
     num_nodes: int
@@ -32,6 +26,18 @@ class PrewarmResponse(BaseModel):
 
 class HealthCheckResponse(BaseModel):
     message: str
+
+
+class ScaleRequest(BaseModel):
+    num_nodes: int
+    daemonset_name: str
+    namespace: str = "default"
+
+
+class ScaleResponse(BaseModel):
+    success: bool
+    message: str
+    num_nodes: int
 
 
 @router.post("/prewarm")
@@ -66,23 +72,34 @@ async def health_check() -> HealthCheckResponse:
     return {"message": "The U-SPS On-Demand API is running and accessible"}
 
 
-@router.post("/scale-up")
-async def scale_up(num_nodes: int) -> dict:
-    daemonset_name = "verdi"
-    daemonset = v1.read_namespaced_daemon_set(daemonset_name, "default")
-    daemonset.spec.replicas = num_nodes
-    v1.patch_namespaced_daemon_set(
-        name=daemonset_name, namespace="default", body=daemonset
-    )
-    return {"message": f"Scaled {daemonset_name} to {num_nodes} replicas"}
+@router.post("/scale")
+async def scale(request: ScaleRequest) -> ScaleResponse:
+    try:
+        config.load_incluster_config()
+        v1 = client.AppsV1Api()
 
+        daemonset = v1.read_namespaced_daemon_set(
+            request.daemonset_name, request.namespace
+        )
+        if request.num_nodes == daemonset.spec.replicas:
+            scale_response = ScaleResponse(
+                success=True,
+                message=f"{request.daemonset_name} is already scaled to {request.num_nodes} replicas",
+                num_nodes=request.num_nodes,
+            )
 
-@router.post("/scale-down")
-async def scale_down(num_nodes: int) -> dict:
-    daemonset_name = "verdi"
-    daemonset = v1.read_namespaced_daemon_set(daemonset_name, "default")
-    daemonset.spec.replicas = num_nodes
-    v1.patch_namespaced_daemon_set(
-        name=daemonset_name, namespace="default", body=daemonset
-    )
-    return {"message": f"Scaled {daemonset_name} to {num_nodes} replicas"}
+        daemonset.spec.replicas = request.num_nodes
+        v1.patch_namespaced_daemon_set(
+            name=request.daemonset_name, namespace=request.namespace, body=daemonset
+        )
+        message = f"Scaled {request.daemonset_name} to {request.num_nodes} replicas in {request.namespace} namespace"
+        scale_response = ScaleResponse(
+            success=True, message=message, num_nodes=request.num_nodes
+        )
+    except Exception as e:
+        error_msg = f"Failed to scale {request.daemonset_name} to {request.num_nodes} replicas in {request.namespace} namespace: {str(e)}"
+        scale_response = ScaleResponse(
+            success=False, message=error_msg, num_nodes=request.num_nodes
+        )
+
+    return scale_response
