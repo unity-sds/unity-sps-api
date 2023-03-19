@@ -79,7 +79,7 @@ def is_valid_desired_size(func):
     @wraps(func)
     def wrapper(req):
         try:
-            eks = boto3.client("eks")
+            eks = boto3.client("eks", region_name="us-west-2")
             current_max_size = 0
             response = eks.describe_nodegroup(
                 clusterName=req.cluster_name,
@@ -93,7 +93,7 @@ def is_valid_desired_size(func):
                 return ScaleResponse(
                     success=False,
                     message=f"Desired size {req.desired_size} is larger than current max size {current_max_size}",
-                    nodegroup_update=None,
+                    nodegroup_update={},
                 )
             else:
                 return func(req)
@@ -101,13 +101,13 @@ def is_valid_desired_size(func):
             return ScaleResponse(
                 success=False,
                 message=f"Error occurred while checking desired size: {str(e)}",
-                nodegroup_update=None,
+                nodegroup_update={},
             )
         except Exception as e:
             return ScaleResponse(
                 success=False,
                 message=f"Unexpected error occurred while checking desired size: {str(e)}",
-                nodegroup_update=None,
+                nodegroup_update={},
             )
 
     return wrapper
@@ -117,7 +117,7 @@ def is_valid_desired_size(func):
 @is_valid_desired_size
 def update_nodegroup_size(req: ScaleRequest) -> ScaleResponse:
     try:
-        eks = boto3.client("eks")
+        eks = boto3.client("eks", region_name="us-west-2")
         response = eks.update_nodegroup_config(
             clusterName=req.cluster_name,
             nodegroupName=req.nodegroup_name,
@@ -132,12 +132,12 @@ def update_nodegroup_size(req: ScaleRequest) -> ScaleResponse:
         scale_response = ScaleResponse(
             success=False,
             message=f"Error occurred while updating nodegroup: {str(e)}",
-            nodegroup_update=None,
+            nodegroup_update={},
         )
     except Exception as e:
         scale_response = ScaleResponse(
             success=False,
             message=f"Unexpected error occurred while updating nodegroup: {str(e)}",
-            nodegroup_update=None,
+            nodegroup_update={},
         )
     return scale_response
