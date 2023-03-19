@@ -1,5 +1,7 @@
-from fastapi import APIRouter
-from pydantic import BaseModel
+from fastapi import APIRouter, Query
+
+# from typing import Dict, Any
+from pydantic import BaseModel  # , Field, root_validator, validator
 import boto3
 import botocore
 from functools import wraps
@@ -18,61 +20,29 @@ router = APIRouter(
 
 
 class PrewarmRequest(BaseModel):
-    num_nodes: int
-
-
-class PrewarmResponse(BaseModel):
-    success: bool
-    message: str
-    request_id: str
-
-
-class HealthCheckResponse(BaseModel):
-    message: str
-
-
-class ScaleRequest(BaseModel):
     cluster_name: str
     node_group_name: str
     desired_size: int
 
 
-class ScaleResponse(BaseModel):
+class PrewarmResponse(BaseModel):
     success: bool
     message: str
     node_group_update: dict
 
 
-@router.post("/prewarm")
-async def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
-    return {
-        "success": True,
-        "message": "Prewarm is not implemented, this request has no effect.",
-        "request_id": f"{req.num_nodes}",
-    }
+# class PrewarmStatusRequest(BaseModel):
+#     prewarm_request_id: str
+#     cluster_name: str = Query(..., description="Name of the EKS cluster.")
+#     node_group_name: str = Query(..., description="Name of the EKS node group.")
 
 
-@router.get("/prewarm/{request_id}")
-async def get_prewarm_request(request_id: str) -> PrewarmResponse:
-    return {
-        "success": True,
-        "message": f"Status for prewarm request ID {request_id}.",
-        "request_id": request_id,
-    }
+class PrewarmStatusResponse(BaseModel):
+    node_group_update: dict
 
 
-@router.delete("/prewarm/{request_id}")
-async def delete_prewarm_request(request_id: str) -> PrewarmResponse:
-    return {
-        "success": True,
-        "message": f"Prewarm request ID {request_id} deleted.",
-        "request_id": request_id,
-    }
-
-
-@router.get("/health-check")
-async def health_check() -> HealthCheckResponse:
-    return {"message": "The U-SPS On-Demand API is running and accessible"}
+class HealthCheckResponse(BaseModel):
+    message: str
 
 
 def is_valid_desired_size(func):
@@ -89,13 +59,13 @@ def is_valid_desired_size(func):
             min_size = node_group["scalingConfig"]["minSize"]
 
             if req.desired_size > max_size:
-                return ScaleResponse(
+                return PrewarmResponse(
                     success=False,
                     message=f"Desired size {req.desired_size} is larger than the node group's max size {max_size}",
                     node_group_update={},
                 )
             elif req.desired_size < min_size:
-                return ScaleResponse(
+                return PrewarmResponse(
                     success=False,
                     message=f"Desired size {req.desired_size} is smaller than the node group's min size {min_size}",
                     node_group_update={},
@@ -103,13 +73,13 @@ def is_valid_desired_size(func):
             else:
                 return func(req)
         except botocore.exceptions.ClientError as e:
-            return ScaleResponse(
+            return PrewarmResponse(
                 success=False,
                 message=f"Error occurred while checking desired size: {str(e)}",
                 node_group_update={},
             )
         except Exception as e:
-            return ScaleResponse(
+            return PrewarmResponse(
                 success=False,
                 message=f"Unexpected error occurred while checking desired size: {str(e)}",
                 node_group_update={},
@@ -118,9 +88,9 @@ def is_valid_desired_size(func):
     return wrapper
 
 
-@router.post("/scale")
+@router.post("/prewarm")
 @is_valid_desired_size
-def update_node_group_size(req: ScaleRequest) -> ScaleResponse:
+def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
     try:
         eks = boto3.client("eks", region_name="us-west-2")
         response = eks.update_nodegroup_config(
@@ -128,21 +98,53 @@ def update_node_group_size(req: ScaleRequest) -> ScaleResponse:
             nodegroupName=req.node_group_name,
             scalingConfig={"desiredSize": req.desired_size},
         )
-        scale_response = ScaleResponse(
+        prewarm_response = PrewarmResponse(
             success=True,
             message="Node group updated successfully",
             node_group_update=response["update"],
         )
     except botocore.exceptions.ClientError as e:
-        scale_response = ScaleResponse(
+        prewarm_response = PrewarmResponse(
             success=False,
             message=f"Error occurred while updating node group: {str(e)}",
             node_group_update={},
         )
     except Exception as e:
-        scale_response = ScaleResponse(
+        prewarm_response = PrewarmResponse(
             success=False,
             message=f"Unexpected error occurred while updating node group: {str(e)}",
             node_group_update={},
         )
-    return scale_response
+    return prewarm_response
+
+
+@router.get("/prewarm/{prewarm_request_id}")
+async def get_prewarm_status(
+    prewarm_request_id: str,
+    cluster_name: str = Query(..., description="Name of the EKS cluster"),
+    node_group_name: str = Query(..., description="Name of the EKS node group"),
+) -> PrewarmStatusResponse:
+    try:
+        eks = boto3.client("eks", region_name="us-west-2")
+        response = eks.describe_update(
+            name=cluster_name,
+            nodegroupName=node_group_name,
+            updateId=prewarm_request_id,
+        )
+        prewarm_status_response = PrewarmStatusResponse(
+            node_group_update=response["update"],
+        )
+    except botocore.exceptions.ClientError as e:
+        prewarm_status_response = PrewarmStatusResponse(
+            node_group_update={},
+        )
+    except Exception as e:
+        prewarm_status_response = PrewarmStatusResponse(
+            node_group_update={},
+        )
+    return prewarm_status_response
+
+
+@router.get("/health-check")
+async def health_check() -> HealthCheckResponse:
+    return {"message": "The U-SPS On-Demand API is running and accessible"}
