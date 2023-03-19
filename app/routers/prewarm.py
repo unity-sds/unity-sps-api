@@ -1,6 +1,9 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
-from kubernetes import client, config
+import boto3
+import botocore
+from functools import wraps
+
 
 router = APIRouter(
     prefix="/sps",
@@ -29,15 +32,15 @@ class HealthCheckResponse(BaseModel):
 
 
 class ScaleRequest(BaseModel):
-    num_nodes: int
-    daemonset_name: str
-    namespace: str = "default"
+    cluster_name: str
+    nodegroup_name: str
+    desired_size: int
 
 
 class ScaleResponse(BaseModel):
     success: bool
     message: str
-    num_nodes: int
+    nodegroup_update: dict
 
 
 @router.post("/prewarm")
@@ -72,34 +75,69 @@ async def health_check() -> HealthCheckResponse:
     return {"message": "The U-SPS On-Demand API is running and accessible"}
 
 
-@router.post("/scale")
-async def scale(request: ScaleRequest) -> ScaleResponse:
-    try:
-        config.load_incluster_config()
-        v1 = client.AppsV1Api()
+def is_valid_desired_size(func):
+    @wraps(func)
+    def wrapper(req):
+        try:
+            eks = boto3.client("eks")
+            current_max_size = 0
+            response = eks.describe_nodegroup(
+                clusterName=req.cluster_name,
+                nodegroupName=req.nodegroup_name,
+            )
+            nodegroup = response["nodegroup"]
+            current_max_size = nodegroup["scalingConfig"]["maxSize"]
 
-        daemonset = v1.read_namespaced_daemon_set(
-            request.daemonset_name, request.namespace
-        )
-        if request.num_nodes == daemonset.spec.replicas:
-            scale_response = ScaleResponse(
-                success=True,
-                message=f"{request.daemonset_name} is already scaled to {request.num_nodes} replicas",
-                num_nodes=request.num_nodes,
+            # Check if desired size is larger than current max size
+            if req.desired_size > current_max_size:
+                return ScaleResponse(
+                    success=False,
+                    message=f"Desired size {req.desired_size} is larger than current max size {current_max_size}",
+                    nodegroup_update=None,
+                )
+            else:
+                return func(req)
+        except botocore.exceptions.ClientError as e:
+            return ScaleResponse(
+                success=False,
+                message=f"Error occurred while checking desired size: {str(e)}",
+                nodegroup_update=None,
+            )
+        except Exception as e:
+            return ScaleResponse(
+                success=False,
+                message=f"Unexpected error occurred while checking desired size: {str(e)}",
+                nodegroup_update=None,
             )
 
-        daemonset.spec.replicas = request.num_nodes
-        v1.patch_namespaced_daemon_set(
-            name=request.daemonset_name, namespace=request.namespace, body=daemonset
+    return wrapper
+
+
+@router.post("/scale")
+@is_valid_desired_size
+def update_nodegroup_size(req: ScaleRequest) -> ScaleResponse:
+    try:
+        eks = boto3.client("eks")
+        response = eks.update_nodegroup_config(
+            clusterName=req.cluster_name,
+            nodegroupName=req.nodegroup_name,
+            scalingConfig={"desiredSize": req.desired_size},
         )
-        message = f"Scaled {request.daemonset_name} to {request.num_nodes} replicas in {request.namespace} namespace"
         scale_response = ScaleResponse(
-            success=True, message=message, num_nodes=request.num_nodes
+            success=True,
+            message="Nodegroup updated successfully",
+            nodegroup_update=response["update"],
+        )
+    except botocore.exceptions.ClientError as e:
+        scale_response = ScaleResponse(
+            success=False,
+            message=f"Error occurred while updating nodegroup: {str(e)}",
+            nodegroup_update=None,
         )
     except Exception as e:
-        error_msg = f"Failed to scale {request.daemonset_name} to {request.num_nodes} replicas in {request.namespace} namespace: {str(e)}"
         scale_response = ScaleResponse(
-            success=False, message=error_msg, num_nodes=request.num_nodes
+            success=False,
+            message=f"Unexpected error occurred while updating nodegroup: {str(e)}",
+            nodegroup_update=None,
         )
-
     return scale_response
