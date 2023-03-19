@@ -33,14 +33,14 @@ class HealthCheckResponse(BaseModel):
 
 class ScaleRequest(BaseModel):
     cluster_name: str
-    nodegroup_name: str
+    node_group_name: str
     desired_size: int
 
 
 class ScaleResponse(BaseModel):
     success: bool
     message: str
-    nodegroup_update: dict
+    node_group_update: dict
 
 
 @router.post("/prewarm")
@@ -80,20 +80,25 @@ def is_valid_desired_size(func):
     def wrapper(req):
         try:
             eks = boto3.client("eks", region_name="us-west-2")
-            current_max_size = 0
             response = eks.describe_nodegroup(
                 clusterName=req.cluster_name,
-                nodegroupName=req.nodegroup_name,
+                nodegroupName=req.node_group_name,
             )
-            nodegroup = response["nodegroup"]
-            current_max_size = nodegroup["scalingConfig"]["maxSize"]
+            node_group = response["nodegroup"]
+            max_size = node_group["scalingConfig"]["maxSize"]
+            min_size = node_group["scalingConfig"]["minSize"]
 
-            # Check if desired size is larger than current max size
-            if req.desired_size > current_max_size:
+            if req.desired_size > max_size:
                 return ScaleResponse(
                     success=False,
-                    message=f"Desired size {req.desired_size} is larger than current max size {current_max_size}",
-                    nodegroup_update={},
+                    message=f"Desired size {req.desired_size} is larger than the node group's max size {max_size}",
+                    node_group_update={},
+                )
+            elif req.desired_size < min_size:
+                return ScaleResponse(
+                    success=False,
+                    message=f"Desired size {req.desired_size} is smaller than the node group's min size {min_size}",
+                    node_group_update={},
                 )
             else:
                 return func(req)
@@ -101,13 +106,13 @@ def is_valid_desired_size(func):
             return ScaleResponse(
                 success=False,
                 message=f"Error occurred while checking desired size: {str(e)}",
-                nodegroup_update={},
+                node_group_update={},
             )
         except Exception as e:
             return ScaleResponse(
                 success=False,
                 message=f"Unexpected error occurred while checking desired size: {str(e)}",
-                nodegroup_update={},
+                node_group_update={},
             )
 
     return wrapper
@@ -115,29 +120,29 @@ def is_valid_desired_size(func):
 
 @router.post("/scale")
 @is_valid_desired_size
-def update_nodegroup_size(req: ScaleRequest) -> ScaleResponse:
+def update_node_group_size(req: ScaleRequest) -> ScaleResponse:
     try:
         eks = boto3.client("eks", region_name="us-west-2")
         response = eks.update_nodegroup_config(
             clusterName=req.cluster_name,
-            nodegroupName=req.nodegroup_name,
+            nodegroupName=req.node_group_name,
             scalingConfig={"desiredSize": req.desired_size},
         )
         scale_response = ScaleResponse(
             success=True,
-            message="Nodegroup updated successfully",
-            nodegroup_update=response["update"],
+            message="Node group updated successfully",
+            node_group_update=response["update"],
         )
     except botocore.exceptions.ClientError as e:
         scale_response = ScaleResponse(
             success=False,
-            message=f"Error occurred while updating nodegroup: {str(e)}",
-            nodegroup_update={},
+            message=f"Error occurred while updating node group: {str(e)}",
+            node_group_update={},
         )
     except Exception as e:
         scale_response = ScaleResponse(
             success=False,
-            message=f"Unexpected error occurred while updating nodegroup: {str(e)}",
-            nodegroup_update={},
+            message=f"Unexpected error occurred while updating node group: {str(e)}",
+            node_group_update={},
         )
     return scale_response
