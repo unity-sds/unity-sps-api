@@ -135,9 +135,9 @@ async def get_prewarm_status(
             node_group_update=response["update"],
         )
     except botocore.exceptions.ClientError as e:
-        raise HTTPException(status_code=400, detail="Bad request")
+        raise HTTPException(status_code=400, detail=f"Bad request: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
     return prewarm_status_response
 
 
