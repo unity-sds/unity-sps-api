@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 
 # from typing import Dict, Any
 from pydantic import BaseModel  # , Field, root_validator, validator
@@ -135,13 +135,9 @@ async def get_prewarm_status(
             node_group_update=response["update"],
         )
     except botocore.exceptions.ClientError as e:
-        prewarm_status_response = PrewarmStatusResponse(
-            node_group_update={},
-        )
+        raise HTTPException(status_code=400, detail="Bad request")
     except Exception as e:
-        prewarm_status_response = PrewarmStatusResponse(
-            node_group_update={},
-        )
+        raise HTTPException(status_code=500, detail="Internal server error")
     return prewarm_status_response
 
 
