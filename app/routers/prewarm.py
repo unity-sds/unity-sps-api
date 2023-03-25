@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse
 import boto3
 import botocore
 from kubernetes import client, config
@@ -94,16 +95,6 @@ async def scale_nodes(desired_size: int, request_id: str):
 def is_valid_desired_size(func):
     @wraps(func)
     def wrapper(req):
-        request_id = str(uuid.uuid4())  # Generate a unique request ID
-
-        # Store the failed prewarm request with the "failed" status
-        def store_failed_request(message):
-            prewarm_requests[request_id] = {
-                "status": "failed",
-                "desired_size": req.desired_size,
-                "error": message,
-            }
-
         try:
             eks = boto3.client("eks", region_name=REGION_NAME)
             response = eks.describe_nodegroup(
@@ -116,37 +107,29 @@ def is_valid_desired_size(func):
 
             if req.desired_size > max_size:
                 message = f"Desired size {req.desired_size} is larger than the node group's max size {max_size}"
-                store_failed_request(message)
-                return PrewarmResponse(
-                    success=False,
-                    message=message,
-                    prewarm_request_id=request_id,
+                return JSONResponse(
+                    status_code=422,
+                    content={"message": message},
                 )
             elif req.desired_size < min_size:
                 message = f"Desired size {req.desired_size} is smaller than the node group's min size {min_size}"
-                store_failed_request(message)
-                return PrewarmResponse(
-                    success=False,
-                    message=message,
-                    prewarm_request_id=request_id,
+                return JSONResponse(
+                    status_code=422,
+                    content={"message": message},
                 )
             else:
-                return func(req, request_id)
+                return func(req)
         except botocore.exceptions.ClientError as e:
             message = f"Error occurred while checking desired size: {str(e)}"
-            store_failed_request(message)
-            return PrewarmResponse(
-                success=False,
-                message=message,
-                prewarm_request_id=request_id,
+            return JSONResponse(
+                status_code=500,
+                content={"message": message},
             )
         except Exception as e:
             message = f"Unexpected error occurred while checking desired size: {str(e)}"
-            store_failed_request(message)
-            return PrewarmResponse(
-                success=False,
-                message=message,
-                prewarm_request_id=request_id,
+            return JSONResponse(
+                status_code=500,
+                content={"message": message},
             )
 
     return wrapper
@@ -155,9 +138,11 @@ def is_valid_desired_size(func):
 @router.post("/prewarm")
 @is_valid_desired_size
 def create_prewarm_request(
-    req: PrewarmRequest, request_id: str, background_tasks: BackgroundTasks
+    req: PrewarmRequest, background_tasks: BackgroundTasks
 ) -> PrewarmResponse:
     try:
+        # Generate a unique request ID
+        request_id = str(uuid.uuid4())
         # Store the prewarm request information
         prewarm_requests[request_id] = {
             "status": "in-progress",
