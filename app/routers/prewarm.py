@@ -94,7 +94,7 @@ async def scale_nodes(desired_size: int, request_id: str):
 
 def is_valid_desired_size(func):
     @wraps(func)
-    def wrapper(req):
+    def wrapper(req, *args, **kwargs):
         try:
             eks = boto3.client("eks", region_name=REGION_NAME)
             response = eks.describe_nodegroup(
@@ -118,7 +118,7 @@ def is_valid_desired_size(func):
                     content={"message": message},
                 )
             else:
-                return func(req)
+                return func(req, *args, **kwargs)
         except botocore.exceptions.ClientError as e:
             message = f"Error occurred while checking desired size: {str(e)}"
             return JSONResponse(
