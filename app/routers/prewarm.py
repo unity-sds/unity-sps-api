@@ -59,7 +59,7 @@ class HealthCheckResponse(BaseModel):
 
 
 def get_active_nodes_in_daemonset() -> int:
-    v1 = client.CoreV1Api()
+    v1 = client.AppsV1Api()
     daemonset = v1.read_namespaced_daemon_set(
         VERDI_DAEMONSET_NAME, VERDI_DAEMONSET_NAMESPACE
     )
