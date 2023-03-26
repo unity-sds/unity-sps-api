@@ -45,7 +45,7 @@ class PrewarmResponse(BaseModel):
 class PrewarmRequestInfo(BaseModel):
     status: str
     desired_size: int
-    active_nodes: int
+    ready_nodes: int
     node_group_update: dict = Field(default=None)
     error: str = Field(default=None)
 
@@ -61,14 +61,14 @@ class PrewarmRequestStatusResponse(BaseModel):
 
 
 class ActiveNodesResponse(BaseModel):
-    num_active_nodes: int
+    num_ready_nodes: int
 
 
 class HealthCheckResponse(BaseModel):
     message: str
 
 
-def get_active_nodes_in_daemonset() -> int:
+def get_ready_nodes_in_daemonset() -> int:
     v1 = client.AppsV1Api()
     daemonset = v1.read_namespaced_daemon_set(
         VERDI_DAEMONSET_NAME, VERDI_DAEMONSET_NAMESPACE
@@ -80,11 +80,11 @@ async def scale_nodes(desired_size: int, request_id: str):
     try:
         eks = boto3.client("eks", region_name=REGION_NAME)
 
-        active_nodes = get_active_nodes_in_daemonset()
+        ready_nodes = get_ready_nodes_in_daemonset()
         prewarm_requests[request_id] = PrewarmRequestInfo(
             status="Running",
             desired_size=desired_size,
-            active_nodes=active_nodes,
+            ready_nodes=ready_nodes,
         )
 
         update_response = eks.update_nodegroup_config(
@@ -106,18 +106,18 @@ async def scale_nodes(desired_size: int, request_id: str):
         await asyncio.sleep(5)
 
         while True:
-            active_nodes = get_active_nodes_in_daemonset()
+            ready_nodes = get_ready_nodes_in_daemonset()
             describe_update_response = eks.describe_update(
                 name=EKS_CLUSTER_NAME,
                 nodegroupName=VERDI_NODE_GROUP_NAME,
                 updateId=node_group_update_id,
             )
-            prewarm_requests[request_id].active_nodes = active_nodes
+            prewarm_requests[request_id].ready_nodes = ready_nodes
             prewarm_requests[request_id].node_group_update = describe_update_response[
                 "update"
             ]
 
-            if active_nodes == desired_size:
+            if ready_nodes == desired_size:
                 prewarm_requests[request_id].status = "Succeeded"
                 break
 
@@ -224,16 +224,16 @@ async def get_prewarm_status(prewarm_request_id: str) -> PrewarmRequestStatusRes
 
 
 @router.get("/active-nodes")
-async def active_nodes() -> ActiveNodesResponse:
+async def ready_nodes() -> ActiveNodesResponse:
     try:
-        num_active_nodes = get_active_nodes_in_daemonset()
-        active_nodes_response = ActiveNodesResponse(
-            num_active_nodes=num_active_nodes,
+        num_ready_nodes = get_ready_nodes_in_daemonset()
+        ready_nodes_response = ActiveNodesResponse(
+            num_ready_nodes=num_ready_nodes,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-    return active_nodes_response
+    return ready_nodes_response
 
 
 @router.get("/health-check")
