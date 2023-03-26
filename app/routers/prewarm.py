@@ -9,6 +9,7 @@ from functools import wraps
 import os
 import asyncio
 import uuid
+from datetime import datetime
 
 
 # Load the Kubernetes configuration
@@ -44,6 +45,7 @@ class PrewarmResponse(BaseModel):
 
 class PrewarmRequestInfo(BaseModel):
     status: str
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     desired_size: int
     ready_nodes: int
     node_group_update: dict = Field(default=None)
@@ -51,13 +53,6 @@ class PrewarmRequestInfo(BaseModel):
 
 
 prewarm_requests: Dict[str, PrewarmRequestInfo] = {}
-
-
-class PrewarmRequestStatusResponse(BaseModel):
-    status: str
-    desired_size: int
-    node_group_update: dict = None
-    error: str = None
 
 
 class ActiveNodesResponse(BaseModel):
@@ -112,6 +107,7 @@ async def scale_nodes(desired_size: int, request_id: str):
                 nodegroupName=VERDI_NODE_GROUP_NAME,
                 updateId=node_group_update_id,
             )
+            prewarm_requests[request_id].timestamp = datetime.utcnow().isoformat()
             prewarm_requests[request_id].ready_nodes = ready_nodes
             prewarm_requests[request_id].node_group_update = describe_update_response[
                 "update"
@@ -207,20 +203,12 @@ def create_prewarm_request(
 
 
 @router.get("/prewarm/{prewarm_request_id}")
-async def get_prewarm_status(prewarm_request_id: str) -> PrewarmRequestStatusResponse:
+async def get_prewarm_status(prewarm_request_id: str) -> PrewarmRequestInfo:
     if prewarm_request_id not in prewarm_requests:
         raise HTTPException(status_code=404, detail="Prewarm request not found")
 
-    prewarm_request = prewarm_requests[prewarm_request_id]
-
-    prewarm_status_response = PrewarmRequestStatusResponse(
-        status=prewarm_request.status,
-        desired_size=prewarm_request.desired_size,
-        node_group_update=prewarm_request.node_group_update,
-        error=prewarm_request.error,
-    )
-
-    return prewarm_status_response
+    prewarm_request_info_response = prewarm_requests[prewarm_request_id]
+    return prewarm_request_info_response
 
 
 @router.get("/active-nodes")
