@@ -52,6 +52,7 @@ class PrewarmRequestInfo(BaseModel):
     error: str = Field(default=None)
 
 
+prewarm_requests_lock = asyncio.Lock()
 prewarm_requests: Dict[str, PrewarmRequestInfo] = {}
 
 
@@ -76,28 +77,18 @@ async def scale_nodes(desired_size: int, request_id: str):
         eks = boto3.client("eks", region_name=REGION_NAME)
 
         ready_nodes = get_ready_nodes_in_daemonset()
-        prewarm_requests[request_id] = PrewarmRequestInfo(
-            status="Running",
-            desired_size=desired_size,
-            ready_nodes=ready_nodes,
-        )
-
+        async with prewarm_requests_lock:
+            prewarm_requests[request_id] = PrewarmRequestInfo(
+                status="Running",
+                desired_size=desired_size,
+                ready_nodes=ready_nodes,
+            )
         update_response = eks.update_nodegroup_config(
             clusterName=EKS_CLUSTER_NAME,
             nodegroupName=VERDI_NODE_GROUP_NAME,
             scalingConfig={"desiredSize": desired_size},
         )
         node_group_update_id = update_response["update"]["id"]
-
-        describe_update_response = eks.describe_update(
-            name=EKS_CLUSTER_NAME,
-            nodegroupName=VERDI_NODE_GROUP_NAME,
-            updateId=node_group_update_id,
-        )
-        prewarm_requests[request_id].node_group_update = describe_update_response[
-            "update"
-        ]
-
         await asyncio.sleep(5)
 
         while True:
@@ -107,21 +98,24 @@ async def scale_nodes(desired_size: int, request_id: str):
                 nodegroupName=VERDI_NODE_GROUP_NAME,
                 updateId=node_group_update_id,
             )
-            prewarm_requests[request_id].timestamp = datetime.utcnow().isoformat()
-            prewarm_requests[request_id].ready_nodes = ready_nodes
-            prewarm_requests[request_id].node_group_update = describe_update_response[
-                "update"
-            ]
+            async with prewarm_requests_lock:
+                prewarm_requests[request_id].timestamp = datetime.utcnow().isoformat()
+                prewarm_requests[request_id].ready_nodes = ready_nodes
+                prewarm_requests[
+                    request_id
+                ].node_group_update = describe_update_response["update"]
 
             if ready_nodes == desired_size:
-                prewarm_requests[request_id].status = "Succeeded"
+                async with prewarm_requests_lock:
+                    prewarm_requests[request_id].status = "Succeeded"
                 break
 
             await asyncio.sleep(5)  # Check the DaemonSet status every 5 seconds
 
     except Exception as e:
-        prewarm_requests[request_id].status = "Failed"
-        prewarm_requests[request_id].error = str(e)
+        async with prewarm_requests_lock:
+            prewarm_requests[request_id].status = "Failed"
+            prewarm_requests[request_id].error = str(e)
 
 
 def is_valid_desired_size(func):
@@ -204,11 +198,11 @@ def create_prewarm_request(
 
 @router.get("/prewarm/{prewarm_request_id}")
 async def get_prewarm_status(prewarm_request_id: str) -> PrewarmRequestInfo:
-    if prewarm_request_id not in prewarm_requests:
-        raise HTTPException(status_code=404, detail="Prewarm request not found")
-
-    prewarm_request_info_response = prewarm_requests[prewarm_request_id]
-    return prewarm_request_info_response
+    async with prewarm_requests_lock:
+        if prewarm_request_id not in prewarm_requests:
+            raise HTTPException(status_code=404, detail="Prewarm request not found")
+        response = prewarm_requests[prewarm_request_id]
+    return response
 
 
 @router.get("/active-nodes")
