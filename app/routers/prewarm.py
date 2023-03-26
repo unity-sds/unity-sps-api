@@ -3,15 +3,13 @@ from fastapi.responses import JSONResponse
 import boto3
 import botocore
 from kubernetes import client, config
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Dict
 from functools import wraps
 import os
 import asyncio
 import uuid
 
-
-prewarm_requests: Dict[str, Dict] = {}
 
 # Load the Kubernetes configuration
 config.load_incluster_config()
@@ -44,6 +42,17 @@ class PrewarmResponse(BaseModel):
     prewarm_request_id: str
 
 
+class PrewarmRequestInfo(BaseModel):
+    status: str
+    desired_size: int
+    active_nodes: int
+    node_group_update: dict = Field(default=None)
+    error: str = Field(default=None)
+
+
+prewarm_requests: Dict[str, PrewarmRequestInfo] = {}
+
+
 class PrewarmRequestStatusResponse(BaseModel):
     status: str
     desired_size: int
@@ -71,25 +80,52 @@ async def scale_nodes(desired_size: int, request_id: str):
     try:
         eks = boto3.client("eks", region_name=REGION_NAME)
 
+        active_nodes = get_active_nodes_in_daemonset()
+        prewarm_requests[request_id] = PrewarmRequestInfo(
+            status="Running",
+            desired_size=desired_size,
+            active_nodes=active_nodes,
+        )
+
+        update_response = eks.update_nodegroup_config(
+            clusterName=EKS_CLUSTER_NAME,
+            nodegroupName=VERDI_NODE_GROUP_NAME,
+            scalingConfig={"desiredSize": desired_size},
+        )
+        node_group_update_id = update_response["update"]["id"]
+
+        describe_update_response = eks.describe_update(
+            name=EKS_CLUSTER_NAME,
+            nodegroupName=VERDI_NODE_GROUP_NAME,
+            updateId=node_group_update_id,
+        )
+        prewarm_requests[request_id].node_group_update = describe_update_response[
+            "update"
+        ]
+
+        await asyncio.sleep(5)
+
         while True:
-            response = eks.update_nodegroup_config(
-                clusterName=EKS_CLUSTER_NAME,
-                nodegroupName=VERDI_NODE_GROUP_NAME,
-                scalingConfig={"desiredSize": desired_size},
-            )
             active_nodes = get_active_nodes_in_daemonset()
+            describe_update_response = eks.describe_update(
+                name=EKS_CLUSTER_NAME,
+                nodegroupName=VERDI_NODE_GROUP_NAME,
+                updateId=node_group_update_id,
+            )
+            prewarm_requests[request_id].active_nodes = active_nodes
+            prewarm_requests[request_id].node_group_update = describe_update_response[
+                "update"
+            ]
+
             if active_nodes == desired_size:
-                prewarm_requests[request_id]["status"] = "Succeeded"
-                prewarm_requests[request_id]["node_group_update"] = response["update"]
+                prewarm_requests[request_id].status = "Succeeded"
                 break
 
-            prewarm_requests[request_id]["status"] = "Running"
-            prewarm_requests[request_id]["node_group_update"] = response["update"]
             await asyncio.sleep(5)  # Check the DaemonSet status every 5 seconds
 
     except Exception as e:
-        prewarm_requests[request_id]["status"] = "failed"
-        prewarm_requests[request_id]["error"] = str(e)
+        prewarm_requests[request_id].status = "Failed"
+        prewarm_requests[request_id].error = str(e)
 
 
 def is_valid_desired_size(func):
@@ -102,6 +138,7 @@ def is_valid_desired_size(func):
                 nodegroupName=VERDI_NODE_GROUP_NAME,
             )
             node_group = response["nodegroup"]
+            current_desired_size = node_group["scalingConfig"]["desiredSize"]
             max_size = node_group["scalingConfig"]["maxSize"]
             min_size = node_group["scalingConfig"]["minSize"]
 
@@ -113,6 +150,12 @@ def is_valid_desired_size(func):
                 )
             elif req.desired_size < min_size:
                 message = f"Desired size {req.desired_size} is smaller than the node group's min size {min_size}"
+                return JSONResponse(
+                    status_code=422,
+                    content={"message": message},
+                )
+            elif req.desired_size == current_desired_size:
+                message = f"Desired size {req.desired_size} is already equal to the current desired size"
                 return JSONResponse(
                     status_code=422,
                     content={"message": message},
@@ -143,18 +186,13 @@ def create_prewarm_request(
     try:
         # Generate a unique request ID
         request_id = str(uuid.uuid4())
-        # Store the prewarm request information
-        prewarm_requests[request_id] = {
-            "status": "in-progress",
-            "desired_size": req.desired_size,
-        }
 
         # Start the scale_nodes function as a background task
         background_tasks.add_task(scale_nodes, req.desired_size, request_id)
 
         prewarm_response = PrewarmResponse(
             success=True,
-            message=f"Prewarm request created with ID {request_id}",
+            message=f"Prewarm request accepted with ID {request_id}",
             prewarm_request_id=request_id,
         )
 
@@ -168,25 +206,6 @@ def create_prewarm_request(
     return prewarm_response
 
 
-# @router.get("/prewarm/{prewarm_request_id}")
-# async def get_prewarm_status(prewarm_request_id: str) -> PrewarmStatusResponse:
-#     try:
-#         eks = boto3.client("eks", region_name=REGION_NAME)
-#         response = eks.describe_update(
-#             name=EKS_CLUSTER_NAME,
-#             nodegroupName=VERDI_NODE_GROUP_NAME,
-#             updateId=prewarm_request_id,
-#         )
-#         prewarm_status_response = PrewarmStatusResponse(
-#             node_group_update=response["update"],
-#         )
-#     except botocore.exceptions.ClientError as e:
-#         raise HTTPException(status_code=400, detail=f"Bad request: {str(e)}")
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-#     return prewarm_status_response
-
-
 @router.get("/prewarm/{prewarm_request_id}")
 async def get_prewarm_status(prewarm_request_id: str) -> PrewarmRequestStatusResponse:
     if prewarm_request_id not in prewarm_requests:
@@ -195,10 +214,10 @@ async def get_prewarm_status(prewarm_request_id: str) -> PrewarmRequestStatusRes
     prewarm_request = prewarm_requests[prewarm_request_id]
 
     prewarm_status_response = PrewarmRequestStatusResponse(
-        status=prewarm_request["status"],
-        desired_size=prewarm_request["desired_size"],
-        node_group_update=prewarm_request.get("node_group_update"),
-        error=prewarm_request.get("error"),
+        status=prewarm_request.status,
+        desired_size=prewarm_request.desired_size,
+        node_group_update=prewarm_request.node_group_update,
+        error=prewarm_request.error,
     )
 
     return prewarm_status_response
