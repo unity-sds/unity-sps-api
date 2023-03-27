@@ -7,7 +7,6 @@ import asyncio
 
 from .routers import prewarm
 
-asyncio.create_task(prewarm.process_prewarm_queue())
 
 app = FastAPI(
     title="Unity SPS REST API",

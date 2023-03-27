@@ -4,7 +4,7 @@ import boto3
 import botocore
 from kubernetes import client, config
 from pydantic import BaseModel, Field
-from typing import Dict, List, Optional
+from typing import Dict, List
 from functools import wraps
 import os
 import asyncio
@@ -13,7 +13,7 @@ from datetime import datetime
 
 
 # Load the Kubernetes configuration
-config.load_incluster_config()
+# config.load_incluster_config()
 
 REGION_NAME = os.environ.get("AWS_REGION_NAME")
 EKS_CLUSTER_NAME = os.environ.get("EKS_CLUSTER_NAME")
@@ -40,7 +40,7 @@ class PrewarmRequest(BaseModel):
 class PrewarmResponse(BaseModel):
     success: bool
     message: str
-    prewarm_request_id: Optional[str]
+    prewarm_request_id: str = None
 
 
 class PrewarmRequestInfo(BaseModel):
@@ -191,16 +191,20 @@ async def process_prewarm_queue():
 
 
 @router.post("/prewarm")
-@is_valid_desired_size
-async def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
+# @is_valid_desired_size
+async def create_prewarm_request(
+    req: PrewarmRequest, background_tasks: BackgroundTasks
+) -> PrewarmResponse:
     try:
         # Generate a unique request ID
         request_id = str(uuid.uuid4())
+        ready_nodes = get_ready_nodes_in_daemonset()
 
         async with prewarm_requests_lock:
             prewarm_requests[request_id] = PrewarmRequestInfo(
                 status="Accepted",
                 desired_size=req.desired_size,
+                ready_nodes=ready_nodes,
             )
 
         # Add the request to the prewarm_requests_queue
@@ -210,6 +214,9 @@ async def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
                 "request_id": request_id,
             }
         )
+
+        # Add process_prewarm_queue as a background task
+        background_tasks.add_task(process_prewarm_queue)
 
         prewarm_response = PrewarmResponse(
             success=True,
