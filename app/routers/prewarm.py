@@ -4,7 +4,7 @@ import boto3
 import botocore
 from kubernetes import client, config
 from pydantic import BaseModel, Field
-from typing import Dict, List
+from typing import Dict, List, Optional
 from functools import wraps
 import os
 import asyncio
@@ -40,7 +40,7 @@ class PrewarmRequest(BaseModel):
 class PrewarmResponse(BaseModel):
     success: bool
     message: str
-    prewarm_request_id: str
+    prewarm_request_id: Optional[str]
 
 
 class PrewarmRequestInfo(BaseModel):
@@ -221,7 +221,6 @@ async def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
         prewarm_response = PrewarmResponse(
             success=False,
             message=f"Unexpected error occurred while creating prewarm request: {str(e)}",
-            prewarm_request_id=None,
         )
 
     return prewarm_response
