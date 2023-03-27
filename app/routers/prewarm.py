@@ -133,7 +133,7 @@ async def scale_nodes(desired_size: int, request_id: str):
 
 def is_valid_desired_size(func):
     @wraps(func)
-    def wrapper(req, *args, **kwargs):
+    async def wrapper(req, *args, **kwargs):
         try:
             eks = boto3.client("eks", region_name=REGION_NAME)
             response = eks.describe_nodegroup(
@@ -164,7 +164,7 @@ def is_valid_desired_size(func):
                     content={"message": message},
                 )
             else:
-                return func(req, *args, **kwargs)
+                return await func(req, *args, **kwargs)
         except botocore.exceptions.ClientError as e:
             message = f"Error occurred while checking desired size: {str(e)}"
             return JSONResponse(
@@ -197,7 +197,6 @@ async def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
         # Generate a unique request ID
         request_id = str(uuid.uuid4())
         ready_nodes = get_ready_nodes_in_daemonset()
-
         async with prewarm_requests_lock:
             prewarm_requests[request_id] = PrewarmRequestInfo(
                 status="Accepted",
