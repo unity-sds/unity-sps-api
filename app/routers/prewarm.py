@@ -13,7 +13,7 @@ from datetime import datetime
 
 
 # Load the Kubernetes configuration
-# config.load_incluster_config()
+config.load_incluster_config()
 
 REGION_NAME = os.environ.get("AWS_REGION_NAME")
 EKS_CLUSTER_NAME = os.environ.get("EKS_CLUSTER_NAME")
