@@ -186,7 +186,7 @@ async def process_prewarm_queue():
         request_info = await prewarm_requests_queue.get()
         desired_size = request_info["desired_size"]
         request_id = request_info["request_id"]
-        # await scale_nodes(desired_size, request_id)
+        await scale_nodes(desired_size, request_id)
         prewarm_requests_queue.task_done()
 
 
