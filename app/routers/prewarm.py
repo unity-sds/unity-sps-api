@@ -186,7 +186,7 @@ async def process_prewarm_queue():
         request_info = await prewarm_requests_queue.get()
         desired_size = request_info["desired_size"]
         request_id = request_info["request_id"]
-        await scale_nodes(desired_size, request_id)
+        # await scale_nodes(desired_size, request_id)
         prewarm_requests_queue.task_done()
 
 
@@ -197,6 +197,12 @@ async def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
         # Generate a unique request ID
         request_id = str(uuid.uuid4())
 
+        async with prewarm_requests_lock:
+            prewarm_requests[request_id] = PrewarmRequestInfo(
+                status="Accepted",
+                desired_size=req.desired_size,
+            )
+
         # Add the request to the prewarm_requests_queue
         await prewarm_requests_queue.put(
             {
@@ -204,12 +210,6 @@ async def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
                 "request_id": request_id,
             }
         )
-
-        async with prewarm_requests_lock:
-            prewarm_requests[request_id] = PrewarmRequestInfo(
-                status="Accepted",
-                desired_size=req.desired_size,
-            )
 
         prewarm_response = PrewarmResponse(
             success=True,
@@ -238,10 +238,8 @@ async def get_prewarm_status(prewarm_request_id: str) -> PrewarmRequestInfo:
 @router.get("/ready-nodes")
 async def ready_nodes() -> ReadyNodesResponse:
     try:
-        num_ready_nodes = get_ready_nodes_in_daemonset()
-        ready_nodes_response = ReadyNodesResponse(
-            num_ready_nodes=num_ready_nodes,
-        )
+        ready_nodes = get_ready_nodes_in_daemonset()
+        ready_nodes_response = ReadyNodesResponse(ready_nodes=ready_nodes)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
