@@ -191,10 +191,8 @@ async def process_prewarm_queue():
 
 
 @router.post("/prewarm")
-# @is_valid_desired_size
-async def create_prewarm_request(
-    req: PrewarmRequest, background_tasks: BackgroundTasks
-) -> PrewarmResponse:
+@is_valid_desired_size
+async def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
     try:
         # Generate a unique request ID
         request_id = str(uuid.uuid4())
@@ -214,9 +212,6 @@ async def create_prewarm_request(
                 "request_id": request_id,
             }
         )
-
-        # Add process_prewarm_queue as a background task
-        background_tasks.add_task(process_prewarm_queue)
 
         prewarm_response = PrewarmResponse(
             success=True,

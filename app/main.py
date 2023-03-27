@@ -15,6 +15,12 @@ app = FastAPI(
     root_path=f"/{os.environ.get('STAGE')}/" if "STAGE" in os.environ else None,
 )
 
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(prewarm.process_prewarm_queue())
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
