@@ -4,7 +4,7 @@ import boto3
 import botocore
 from kubernetes import client, config
 from pydantic import BaseModel, Field
-from typing import Dict
+from typing import Dict, List
 from functools import wraps
 import os
 import asyncio
@@ -45,7 +45,9 @@ class PrewarmResponse(BaseModel):
 
 class PrewarmRequestInfo(BaseModel):
     status: str
-    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    last_update_timestamp: str = Field(
+        default_factory=lambda: datetime.utcnow().isoformat()
+    )
     desired_size: int
     ready_nodes: int
     node_group_update: dict = Field(default=None)
@@ -53,11 +55,20 @@ class PrewarmRequestInfo(BaseModel):
 
 
 prewarm_requests_lock = asyncio.Lock()
+prewarm_requests_queue: asyncio.Queue = asyncio.Queue()
 prewarm_requests: Dict[str, PrewarmRequestInfo] = {}
 
 
-class ActiveNodesResponse(BaseModel):
-    num_ready_nodes: int
+class ReadyNodesResponse(BaseModel):
+    ready_nodes: int
+
+
+class NodeGroupInfo(BaseModel):
+    instance_types: List[str]
+    desired_size: int
+    min_size: int
+    max_size: int
+    ready_nodes: int
 
 
 class HealthCheckResponse(BaseModel):
@@ -99,7 +110,9 @@ async def scale_nodes(desired_size: int, request_id: str):
                 updateId=node_group_update_id,
             )
             async with prewarm_requests_lock:
-                prewarm_requests[request_id].timestamp = datetime.utcnow().isoformat()
+                prewarm_requests[
+                    request_id
+                ].last_update_timestamp = datetime.utcnow().isoformat()
                 prewarm_requests[request_id].ready_nodes = ready_nodes
                 prewarm_requests[
                     request_id
@@ -168,17 +181,35 @@ def is_valid_desired_size(func):
     return wrapper
 
 
+async def process_prewarm_queue():
+    while True:
+        request_info = await prewarm_requests_queue.get()
+        desired_size = request_info["desired_size"]
+        request_id = request_info["request_id"]
+        await scale_nodes(desired_size, request_id)
+        prewarm_requests_queue.task_done()
+
+
 @router.post("/prewarm")
 @is_valid_desired_size
-def create_prewarm_request(
-    req: PrewarmRequest, background_tasks: BackgroundTasks
-) -> PrewarmResponse:
+async def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
     try:
         # Generate a unique request ID
         request_id = str(uuid.uuid4())
 
-        # Start the scale_nodes function as a background task
-        background_tasks.add_task(scale_nodes, req.desired_size, request_id)
+        # Add the request to the prewarm_requests_queue
+        await prewarm_requests_queue.put(
+            {
+                "desired_size": req.desired_size,
+                "request_id": request_id,
+            }
+        )
+
+        async with prewarm_requests_lock:
+            prewarm_requests[request_id] = PrewarmRequestInfo(
+                status="Accepted",
+                desired_size=req.desired_size,
+            )
 
         prewarm_response = PrewarmResponse(
             success=True,
@@ -205,17 +236,47 @@ async def get_prewarm_status(prewarm_request_id: str) -> PrewarmRequestInfo:
     return response
 
 
-@router.get("/active-nodes")
-async def ready_nodes() -> ActiveNodesResponse:
+@router.get("/ready-nodes")
+async def ready_nodes() -> ReadyNodesResponse:
     try:
         num_ready_nodes = get_ready_nodes_in_daemonset()
-        ready_nodes_response = ActiveNodesResponse(
+        ready_nodes_response = ReadyNodesResponse(
             num_ready_nodes=num_ready_nodes,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
     return ready_nodes_response
+
+
+@router.get("/node-group-info")
+async def get_node_group_info() -> NodeGroupInfo:
+    eks = boto3.client("eks", region_name=REGION_NAME)
+    try:
+        response = eks.describe_nodegroup(
+            clusterName=EKS_CLUSTER_NAME,
+            nodegroupName=VERDI_NODE_GROUP_NAME,
+        )
+        node_group = response["nodegroup"]
+        scaling_config = node_group["scalingConfig"]
+        instance_types = node_group["instanceTypes"]
+        desired_size = scaling_config["desiredSize"]
+        min_size = scaling_config["minSize"]
+        max_size = scaling_config["maxSize"]
+        ready_nodes = get_ready_nodes_in_daemonset()
+        node_group_info = NodeGroupInfo(
+            instance_types=instance_types,
+            desired_size=desired_size,
+            min_size=min_size,
+            max_size=max_size,
+            ready_nodes=ready_nodes,
+        )
+    except botocore.exceptions.ClientError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error occurred while getting node group info: {str(e)}",
+        )
+    return node_group_info
 
 
 @router.get("/health-check")
