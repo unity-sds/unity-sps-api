@@ -1,12 +1,11 @@
-import os
-from fastapi import Depends, FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.utils import get_openapi
-from mangum import Mangum
 import asyncio
+import os
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from mangum import Mangum
 
 from .routers import prewarm
-
 
 app = FastAPI(
     title="Unity SPS REST API",

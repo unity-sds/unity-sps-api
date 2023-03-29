@@ -1,16 +1,16 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
-import boto3
-import botocore
-from kubernetes import client, config
-from pydantic import BaseModel, Field
-from typing import Dict, List
-from functools import wraps
-import os
 import asyncio
+import os
 import uuid
 from datetime import datetime
+from functools import wraps
+from typing import Dict, List
 
+import boto3
+import botocore
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
+from kubernetes import client, config
+from pydantic import BaseModel, Field
 
 # Load the Kubernetes configuration
 config.load_incluster_config()
