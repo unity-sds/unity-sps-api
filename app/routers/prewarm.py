@@ -34,7 +34,7 @@ router = APIRouter(
 
 
 class PrewarmRequest(BaseModel):
-    desired_size: int
+    num_nodes: int
 
 
 class PrewarmResponse(BaseModel):
@@ -48,7 +48,7 @@ class PrewarmRequestInfo(BaseModel):
     last_update_timestamp: str = Field(
         default_factory=lambda: datetime.utcnow().isoformat()
     )
-    desired_size: int
+    num_nodes: int
     ready_nodes: int
     node_group_update: dict = Field(default=None)
     error: str = Field(default=None)
@@ -83,7 +83,7 @@ def get_ready_nodes_in_daemonset() -> int:
     return daemonset.status.number_ready
 
 
-async def scale_nodes(desired_size: int, request_id: str):
+async def scale_nodes(num_nodes: int, request_id: str):
     try:
         eks = boto3.client("eks", region_name=REGION_NAME)
 
@@ -91,13 +91,13 @@ async def scale_nodes(desired_size: int, request_id: str):
         async with prewarm_requests_lock:
             prewarm_requests[request_id] = PrewarmRequestInfo(
                 status="Running",
-                desired_size=desired_size,
+                num_nodes=num_nodes,
                 ready_nodes=ready_nodes,
             )
         update_response = eks.update_nodegroup_config(
             clusterName=EKS_CLUSTER_NAME,
             nodegroupName=VERDI_NODE_GROUP_NAME,
-            scalingConfig={"desiredSize": desired_size},
+            scalingConfig={"desiredSize": num_nodes},
         )
         node_group_update_id = update_response["update"]["id"]
         await asyncio.sleep(5)
@@ -118,7 +118,7 @@ async def scale_nodes(desired_size: int, request_id: str):
                     request_id
                 ].node_group_update = describe_update_response["update"]
 
-            if ready_nodes == desired_size:
+            if ready_nodes == num_nodes:
                 async with prewarm_requests_lock:
                     prewarm_requests[request_id].status = "Succeeded"
                 break
@@ -131,7 +131,7 @@ async def scale_nodes(desired_size: int, request_id: str):
             prewarm_requests[request_id].error = str(e)
 
 
-def is_valid_desired_size(func):
+def is_valid_num_nodes(func):
     @wraps(func)
     async def wrapper(req, *args, **kwargs):
         try:
@@ -145,20 +145,20 @@ def is_valid_desired_size(func):
             max_size = node_group["scalingConfig"]["maxSize"]
             min_size = node_group["scalingConfig"]["minSize"]
 
-            if req.desired_size > max_size:
-                message = f"Desired size {req.desired_size} is larger than the node group's max size {max_size}"
+            if req.num_nodes > max_size:
+                message = f"Requested number of nodes ({req.num_nodes}) is larger than the node group's max size ({max_size})"
                 return JSONResponse(
                     status_code=422,
                     content={"message": message},
                 )
-            elif req.desired_size < min_size:
-                message = f"Desired size {req.desired_size} is smaller than the node group's min size {min_size}"
+            elif req.num_nodes < min_size:
+                message = f"Requested number of nodes ({req.num_nodes}) is smaller than the node group's min size ({min_size})"
                 return JSONResponse(
                     status_code=422,
                     content={"message": message},
                 )
-            elif req.desired_size == current_desired_size:
-                message = f"Desired size {req.desired_size} is already equal to the current desired size"
+            elif req.num_nodes == current_desired_size:
+                message = f"Requested number of nodes ({req.num_nodes}) is already equal to the current desired size"
                 return JSONResponse(
                     status_code=422,
                     content={"message": message},
@@ -166,13 +166,15 @@ def is_valid_desired_size(func):
             else:
                 return await func(req, *args, **kwargs)
         except botocore.exceptions.ClientError as e:
-            message = f"Error occurred while checking desired size: {str(e)}"
+            message = (
+                f"Error occurred while validating requested number of nodes: {str(e)}"
+            )
             return JSONResponse(
                 status_code=500,
                 content={"message": message},
             )
         except Exception as e:
-            message = f"Unexpected error occurred while checking desired size: {str(e)}"
+            message = f"Unexpected error occurred while validating requested number of nodes: {str(e)}"
             return JSONResponse(
                 status_code=500,
                 content={"message": message},
@@ -184,14 +186,14 @@ def is_valid_desired_size(func):
 async def process_prewarm_queue():
     while True:
         request_info = await prewarm_requests_queue.get()
-        desired_size = request_info["desired_size"]
+        num_nodes = request_info["num_nodes"]
         request_id = request_info["request_id"]
-        await scale_nodes(desired_size, request_id)
+        await scale_nodes(num_nodes, request_id)
         prewarm_requests_queue.task_done()
 
 
 @router.post("/prewarm")
-@is_valid_desired_size
+@is_valid_num_nodes
 async def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
     try:
         # Generate a unique request ID
@@ -200,14 +202,14 @@ async def create_prewarm_request(req: PrewarmRequest) -> PrewarmResponse:
         async with prewarm_requests_lock:
             prewarm_requests[request_id] = PrewarmRequestInfo(
                 status="Accepted",
-                desired_size=req.desired_size,
+                num_nodes=req.num_nodes,
                 ready_nodes=ready_nodes,
             )
 
         # Add the request to the prewarm_requests_queue
         await prewarm_requests_queue.put(
             {
-                "desired_size": req.desired_size,
+                "num_nodes": req.num_nodes,
                 "request_id": request_id,
             }
         )
